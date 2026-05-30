@@ -4,7 +4,8 @@ from config import LOWER_ORANGE, UPPER_ORANGE
 
 def detect_ball(frame):
 
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    blurred = cv2.GaussianBlur(frame, (5, 5), 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
     lower = np.array(LOWER_ORANGE)
     upper = np.array(UPPER_ORANGE)
@@ -13,12 +14,15 @@ def detect_ball(frame):
 
     kernel = np.ones((5,5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     contours, _ = cv2.findContours(
         mask,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE
     )
+
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
     for cnt in contours:
 

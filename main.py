@@ -1,6 +1,7 @@
 import cv2
 import json
 import os
+import numpy as np
 
 from config import *
 from ball_detection import detect_ball
@@ -11,9 +12,13 @@ from shot_analysis import (
     predict_shot
 )
 
-cap = cv2.VideoCapture("C:\\Users\\HP ELITEBOOK\\Videos\\VID-20260530-WA0018.mp4")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+VIDEO_PATH = os.path.join(SCRIPT_DIR, "resrc", "testSub1.mp4")
 
-rim = get_rim_position()
+cap = cv2.VideoCapture(VIDEO_PATH)
+
+# Try to detect the rim from the video first; fall back to config values inside the function
+rim = get_rim_position(cap)
 
 while True:
 
@@ -37,7 +42,7 @@ while True:
     angle = calculate_angle(trajectory)
 
     shot_success = predict_shot(
-        ball_center,
+        trajectory,
         rim
     )
 
@@ -114,6 +119,33 @@ while True:
         "angle": angle,
         "shot_prediction": status
     }
+
+    # Fit quadratic in time domain: x(t) and y(t) for a more stable fit
+    arc_points = []
+    poly_coeffs_x = None
+    poly_coeffs_y = None
+
+    if len(trajectory) >= 3:
+        try:
+            t = np.arange(len(trajectory), dtype=float)
+            xs = np.array([p[0] for p in trajectory], dtype=float)
+            ys = np.array([p[1] for p in trajectory], dtype=float)
+
+            coeffs_x = np.polyfit(t, xs, 2)
+            coeffs_y = np.polyfit(t, ys, 2)
+            poly_coeffs_x = coeffs_x.tolist()
+            poly_coeffs_y = coeffs_y.tolist()
+
+            sample_t = np.linspace(0, len(trajectory) - 1, num=25)
+            sample_x = np.polyval(coeffs_x, sample_t)
+            sample_y = np.polyval(coeffs_y, sample_t)
+            arc_points = [[int(x), int(y)] for x, y in zip(sample_x, sample_y)]
+        except Exception:
+            arc_points = []
+
+    output_data["arc"] = arc_points
+    output_data["poly_coeffs_x"] = poly_coeffs_x
+    output_data["poly_coeffs_y"] = poly_coeffs_y
 
     os.makedirs("output", exist_ok=True)
 

@@ -19,17 +19,28 @@ def calculate_angle(trajectory):
     return round(angle, 2)
 
 
-def predict_shot(ball_position, rim_position):
+def predict_shot(trajectory, rim_position):
 
-    if ball_position is None:
+    if len(trajectory) < 5:
         return False
 
-    bx, by = ball_position
-
+    bx, by = trajectory[-1]
     rx = rim_position["x"]
     ry = rim_position["y"]
     rr = rim_position["radius"]
 
-    distance = math.sqrt((bx - rx)**2 + (by - ry)**2)
+    x1, y1 = trajectory[-5]
+    x2, y2 = trajectory[-1]
 
-    return distance <= rr
+    if x2 == x1 and y2 == y1:
+        return False
+
+    moving_down = (y2 - y1) > 0
+    distance = math.sqrt((bx - rx) ** 2 + (by - ry) ** 2)
+    close_to_rim = distance <= rr * 1.8
+
+    line_distance = abs((y2 - y1) * rx - (x2 - x1) * ry + x2 * y1 - y2 * x1)
+    line_distance /= math.hypot(y2 - y1, x2 - x1)
+    aimed_at_rim = line_distance <= rr * 1.5
+
+    return moving_down and close_to_rim and aimed_at_rim
