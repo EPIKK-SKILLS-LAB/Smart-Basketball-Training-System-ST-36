@@ -1,0 +1,814 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Basketball Training Dashboard</title>
+
+  <style>
+    :root {
+      --background: #121212;
+      --surface: #121212;
+      --border: #303030;
+      --text: #f5f5f5;
+      --muted: #a0a0a0;
+      --green: #42d392;
+      --red: #ff5c5c;
+      --orange: #ff9f43;
+      --blue: #62a8ff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #121212;
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button {
+      min-height: 46px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      background: #121212;
+      color: var(--text);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover:not(:disabled) {
+      border-color: var(--text);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .45;
+    }
+
+    .app {
+      width: min(1450px, 100%);
+      margin: auto;
+      padding: 14px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(1.25rem, 4vw, 2rem);
+    }
+
+    h2 {
+      font-size: 1rem;
+      margin-bottom: 12px;
+    }
+
+    .connection {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: .85rem;
+      text-align: right;
+    }
+
+    .connection-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    .connection-dot.live {
+      background: var(--green);
+      box-shadow: 0 0 10px var(--green);
+    }
+
+    .layout {
+      display: grid;
+      gap: 14px;
+    }
+
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #121212;
+    }
+
+    .video-panel {
+      overflow: hidden;
+    }
+
+    .video-container {
+      position: relative;
+      aspect-ratio: 16 / 9;
+      background: #121212;
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #121212;
+    }
+
+    .recording-badge {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      display: none;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 10px;
+      border: 1px solid var(--red);
+      border-radius: 999px;
+      background: #121212;
+      color: var(--red);
+      font-size: .8rem;
+      font-weight: 700;
+    }
+
+    .recording-badge.active {
+      display: flex;
+    }
+
+    .recording-badge span {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+    }
+
+    .feedback-overlay {
+      position: absolute;
+      right: 10px;
+      bottom: 10px;
+      left: 10px;
+      display: grid;
+      gap: 4px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #121212;
+      font-size: .8rem;
+    }
+
+    .feedback-result {
+      color: var(--orange);
+      font-weight: 800;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 12px;
+    }
+
+    .controls button:last-child {
+      grid-column: 1 / -1;
+    }
+
+    .primary {
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    .danger {
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .message {
+      min-height: 22px;
+      padding: 0 12px 12px;
+      color: var(--muted);
+      font-size: .85rem;
+    }
+
+    .dashboard {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+    }
+
+    .metric {
+      min-height: 78px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #121212;
+    }
+
+    .metric-label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: .72rem;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .metric-value {
+      display: block;
+      overflow: hidden;
+      color: var(--text);
+      font-size: 1rem;
+      font-weight: 800;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .metric-value.result {
+      color: var(--orange);
+    }
+
+    .metric-value.good {
+      color: var(--green);
+    }
+
+    .metric-value.bad {
+      color: var(--red);
+    }
+
+    .stats {
+      display: grid;
+      gap: 8px;
+      margin-top: 2px;
+    }
+
+    .stats-line {
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: .85rem;
+      line-height: 1.5;
+    }
+
+    .records-panel {
+      padding: 12px;
+    }
+
+    .records {
+      display: grid;
+      gap: 8px;
+    }
+
+    .record {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+
+    .record-name {
+      overflow: hidden;
+      color: var(--muted);
+      font-size: .8rem;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .record a {
+      flex: 0 0 auto;
+      color: var(--text);
+      font-size: .8rem;
+    }
+
+    @media (min-width: 800px) {
+      .app {
+        padding: 24px;
+      }
+
+      .layout {
+        grid-template-columns: minmax(0, 1fr) 380px;
+        align-items: start;
+      }
+
+      .dashboard-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .controls {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .controls button:last-child {
+        grid-column: auto;
+      }
+    }
+
+    @media (orientation: portrait) and (max-width: 700px) {
+      .video-container {
+        aspect-ratio: 4 / 3;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main class="app">
+    <header>
+      <h1>Basketball Training</h1>
+
+      <div class="connection">
+        <span id="connectionDot" class="connection-dot"></span>
+        <span id="connectionText">Disconnected</span>
+      </div>
+    </header>
+
+    <section class="layout">
+      <div>
+        <section class="panel video-panel">
+          <div class="video-container">
+            <video id="cameraPreview" autoplay muted playsinline></video>
+
+            <div id="recordingBadge" class="recording-badge">
+              <span></span>
+              Recording
+            </div>
+
+            <div class="feedback-overlay">
+              <span id="overlayResult" class="feedback-result">
+                Waiting for model
+              </span>
+              <span id="overlayAccuracy">Accuracy: --</span>
+              <span id="overlayState">State: IDLE</span>
+            </div>
+          </div>
+
+          <div class="controls">
+            <button id="startTraining" class="primary">
+              Start Training
+            </button>
+
+            <button id="recordButton" class="danger" disabled>
+              Start Recording
+            </button>
+
+            <button id="stopButton" disabled>
+              Stop
+            </button>
+          </div>
+
+          <div id="message" class="message">
+            Start training to enable the camera.
+          </div>
+        </section>
+
+        <section class="panel dashboard">
+          <h2>Session Dashboard</h2>
+
+          <div class="dashboard-grid">
+            <div class="metric">
+              <span class="metric-label">Shot Result</span>
+              <strong id="resultValue" class="metric-value result">--</strong>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Shot Number</span>
+              <strong id="shotValue" class="metric-value">0</strong>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Session Accuracy</span>
+              <strong id="accuracyValue" class="metric-value">0%</strong>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Made</span>
+              <strong id="madeValue" class="metric-value good">0</strong>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Missed</span>
+              <strong id="missedValue" class="metric-value bad">0</strong>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Airball</span>
+              <strong id="airballValue" class="metric-value">0</strong>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">Shot Time</span>
+              <strong id="timeValue" class="metric-value">00:00:00</strong>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">System State</span>
+              <strong id="stateValue" class="metric-value">IDLE</strong>
+            </div>
+
+            <div class="metric">
+              <span class="metric-label">BLE Status</span>
+              <strong id="bleValue" class="metric-value">STANDALONE</strong>
+            </div>
+          </div>
+
+          <div class="stats">
+            <div id="irValue" class="stats-line">
+              IR: 1:0 2:0 3:0
+            </div>
+
+            <div id="statsValue" class="stats-line">
+              STATS | Total:0 Made:0 Missed:0 Airball:0 Acc:0%
+            </div>
+
+            <div id="formattedValue" class="stats-line">
+              RESULT|WAITING
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <aside class="panel records-panel">
+        <h2>Records</h2>
+        <div id="recordList" class="records">
+          No recordings yet.
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    const preview = document.getElementById("cameraPreview");
+    const startTrainingButton = document.getElementById("startTraining");
+    const recordButton = document.getElementById("recordButton");
+    const stopButton = document.getElementById("stopButton");
+    const recordingBadge = document.getElementById("recordingBadge");
+    const connectionDot = document.getElementById("connectionDot");
+    const connectionText = document.getElementById("connectionText");
+    const message = document.getElementById("message");
+    const recordList = document.getElementById("recordList");
+
+    const overlayResult = document.getElementById("overlayResult");
+    const overlayAccuracy = document.getElementById("overlayAccuracy");
+    const overlayState = document.getElementById("overlayState");
+
+    const resultValue = document.getElementById("resultValue");
+    const shotValue = document.getElementById("shotValue");
+    const accuracyValue = document.getElementById("accuracyValue");
+    const madeValue = document.getElementById("madeValue");
+    const missedValue = document.getElementById("missedValue");
+    const airballValue = document.getElementById("airballValue");
+    const timeValue = document.getElementById("timeValue");
+    const stateValue = document.getElementById("stateValue");
+    const bleValue = document.getElementById("bleValue");
+    const irValue = document.getElementById("irValue");
+    const statsValue = document.getElementById("statsValue");
+    const formattedValue = document.getElementById("formattedValue");
+
+    let mediaStream = null;
+    let socket = null;
+    let isRecording = false;
+    let captureTimer = null;
+
+    const captureCanvas = document.createElement("canvas");
+    const captureContext = captureCanvas.getContext("2d");
+
+    function setMessage(text) {
+      message.textContent = text;
+    }
+
+    function setConnection(text, live = false) {
+      connectionText.textContent = text;
+      connectionDot.classList.toggle("live", live);
+    }
+
+    function value(data, ...keys) {
+      for (const key of keys) {
+        if (data[key] !== undefined && data[key] !== null) {
+          return data[key];
+        }
+      }
+
+      return undefined;
+    }
+
+    function formatPercent(number) {
+      if (number === undefined || number === null) {
+        return "--";
+      }
+
+      const numeric = Number(number);
+      return `${numeric <= 1 ? Math.round(numeric * 100) : Math.round(numeric)}%`;
+    }
+
+    function updateDashboard(data) {
+      const result = String(
+        value(data, "result", "RESULT", "feedback") || "WAITING"
+      ).toUpperCase();
+
+      const shot = value(data, "shot", "SHOT", "shot_number") ?? 0;
+      const accuracy = value(data, "acc", "ACC", "accuracy") ?? 0;
+      const made = value(data, "made", "MADE") ?? 0;
+      const missed = value(data, "missed", "MISSED") ?? 0;
+      const airball = value(data, "airball", "AIRBALL") ?? 0;
+      const time = value(data, "time", "TIME") || "00:00:00";
+      const state = String(
+        value(data, "state", "STATE") || "CLASSIFYING"
+      ).toUpperCase();
+      const connection = String(
+        value(data, "conn", "CONN", "connection") || "CONNECTED"
+      ).toUpperCase();
+
+      const ir = value(data, "ir", "IR") || {};
+      const ir1 = ir["1"] ?? ir[1] ?? 0;
+      const ir2 = ir["2"] ?? ir[2] ?? 0;
+      const ir3 = ir["3"] ?? ir[3] ?? 0;
+
+      resultValue.textContent = result;
+      shotValue.textContent = shot;
+      accuracyValue.textContent = formatPercent(accuracy);
+      madeValue.textContent = made;
+      missedValue.textContent = missed;
+      airballValue.textContent = airball;
+      timeValue.textContent = time;
+      stateValue.textContent = state;
+      bleValue.textContent = connection;
+
+      overlayResult.textContent = `RESULT | ${result}`;
+      overlayAccuracy.textContent = `Accuracy: ${formatPercent(accuracy)}`;
+      overlayState.textContent = `State: ${state}`;
+
+      irValue.textContent = `IR | 1:${ir1} 2:${ir2} 3:${ir3}`;
+
+      const total = Number(shot) || Number(made) + Number(missed) + Number(airball);
+
+      statsValue.textContent =
+        `STATS | Total:${total} Made:${made} Missed:${missed} ` +
+        `Airball:${airball} Acc:${formatPercent(accuracy)}`;
+
+      formattedValue.textContent =
+        `RESULT|${result} SHOT#${shot} ACC|${formatPercent(accuracy)} ` +
+        `MADE|${made} MISSED|${missed} AIRBALL|${airball} ` +
+        `TIME|${time} IR|1:${ir1} 2:${ir2} 3:${ir3}`;
+
+      if (data.feedback && result === "WAITING") {
+        overlayResult.textContent = data.feedback;
+      }
+    }
+
+    async function startTraining() {
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          },
+          audio: false
+        });
+
+        preview.srcObject = mediaStream;
+
+        const protocol = location.protocol === "https:" ? "wss" : "ws";
+        socket = new WebSocket(
+          `${protocol}://${location.host}/api/training/ws`
+        );
+
+        socket.onopen = () => {
+          socket.send(JSON.stringify({
+            type: "start",
+            started_at: new Date().toISOString()
+          }));
+
+          setConnection("Training ready", true);
+          setMessage("Camera connected. Start recording when ready.");
+
+          startTrainingButton.disabled = true;
+          recordButton.disabled = false;
+          stopButton.disabled = false;
+        };
+
+        socket.onmessage = (event) => {
+          let data;
+
+          try {
+            data = JSON.parse(event.data);
+          } catch {
+            return;
+          }
+
+          if (data.type === "feedback") {
+            updateDashboard(data);
+            setMessage("Model is processing the video.");
+          }
+
+          if (data.type === "started") {
+            updateDashboard({
+              state: "IDLE",
+              conn: "CONNECTED"
+            });
+          }
+
+          if (data.type === "completed") {
+            setMessage(
+              data.file
+                ? `Recording saved: ${data.file}`
+                : "Recording completed."
+            );
+
+            loadRecords();
+          }
+        };
+
+        socket.onerror = () => {
+          setConnection("Connection error");
+          setMessage("Could not connect to the backend.");
+        };
+
+        socket.onclose = () => {
+          if (isRecording) {
+            stopRecording(false);
+          }
+
+          setConnection("Disconnected");
+        };
+      } catch (error) {
+        setConnection("Camera unavailable");
+        setMessage("Camera permission was denied or no camera was found.");
+      }
+    }
+
+    function startRecording() {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        setMessage("Start training first.");
+        return;
+      }
+
+      if (isRecording) {
+        return;
+      }
+
+      isRecording = true;
+      recordButton.disabled = true;
+      recordButton.textContent = "Recording...";
+      recordingBadge.classList.add("active");
+
+      setMessage("Video is being streamed to the model.");
+
+      captureTimer = setInterval(() => {
+        if (
+          !mediaStream ||
+          !socket ||
+          socket.readyState !== WebSocket.OPEN
+        ) {
+          return;
+        }
+
+        const width = preview.videoWidth;
+        const height = preview.videoHeight;
+
+        if (!width || !height) {
+          return;
+        }
+
+        captureCanvas.width = width;
+        captureCanvas.height = height;
+        captureContext.drawImage(preview, 0, 0, width, height);
+
+        captureCanvas.toBlob((blob) => {
+          if (
+            blob &&
+            socket &&
+            socket.readyState === WebSocket.OPEN
+          ) {
+            socket.send(blob);
+          }
+        }, "image/jpeg", 0.78);
+      }, 100);
+    }
+
+    function stopRecording(sendStop = true) {
+      if (captureTimer) {
+        clearInterval(captureTimer);
+        captureTimer = null;
+      }
+
+      if (
+        sendStop &&
+        socket &&
+        socket.readyState === WebSocket.OPEN
+      ) {
+        socket.send("stop");
+      }
+
+      isRecording = false;
+      recordingBadge.classList.remove("active");
+      recordButton.textContent = "Start Recording";
+      recordButton.disabled = !socket || socket.readyState !== WebSocket.OPEN;
+
+      setMessage("Processing stopped.");
+    }
+
+    function stopTraining() {
+      stopRecording();
+
+      if (socket) {
+        socket.close();
+        socket = null;
+      }
+
+      if (mediaStream) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        mediaStream = null;
+      }
+
+      preview.srcObject = null;
+      startTrainingButton.disabled = false;
+      recordButton.disabled = true;
+      stopButton.disabled = true;
+
+      setConnection("Disconnected");
+      setMessage("Start training to enable the camera.");
+      updateDashboard({
+        result: "WAITING",
+        shot: 0,
+        acc: 0,
+        made: 0,
+        missed: 0,
+        airball: 0,
+        time: "00:00:00",
+        state: "IDLE",
+        conn: "STANDALONE"
+      });
+    }
+
+    async function loadRecords() {
+      try {
+        const response = await fetch("/api/records");
+        const data = await response.json();
+
+        if (!data.records || !data.records.length) {
+          recordList.textContent = "No recordings yet.";
+          return;
+        }
+
+        recordList.innerHTML = "";
+
+        data.records.forEach((record) => {
+          const row = document.createElement("div");
+          row.className = "record";
+
+          const name = document.createElement("span");
+          name.className = "record-name";
+          name.textContent = record.name;
+
+          const link = document.createElement("a");
+          link.href = record.url;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = "Open";
+
+          row.append(name, link);
+          recordList.appendChild(row);
+        });
+      } catch {
+        recordList.textContent = "Unable to load recordings.";
+      }
+    }
+
+    startTrainingButton.addEventListener("click", startTraining);
+    recordButton.addEventListener("click", startRecording);
+    stopButton.addEventListener("click", stopTraining);
+
+    updateDashboard({
+      result: "WAITING",
+      state: "IDLE",
+      conn: "STANDALONE"
+    });
+
+    loadRecords();
+  </script>
+</body>
+</html>

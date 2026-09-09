@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-multipart
+aiofiles
+opencv-python-headless
+numpy
+uvicorn[standard]

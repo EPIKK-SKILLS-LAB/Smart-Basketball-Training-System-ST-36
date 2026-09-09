@@ -1,117 +1,227 @@
+"""
+rim_detection.py
+================
+Robust basketball rim (hoop) detector using a multi-frame accumulation strategy.
+
+Algorithm
+---------
+1. Sample up to RIM_DETECTION_FRAMES evenly spaced frames from the video.
+2. In each frame apply an orange HSV mask (the rim is always orange/red metal)
+   combined with Canny edges.
+3. Run HoughCircles on the combined edge/colour map.
+4. Accumulate all candidates; vote by clustering nearby candidates (DBSCAN-style).
+5. Select the most-voted cluster.  If confidence < RIM_CONFIDENCE_THRESH,
+   return detected=False (e.g. outdoor driveways with no hoop visible).
+6. Optionally fit an ellipse to handle perspective projection from side cameras.
+
+Fallback
+--------
+If detection fails, return the config fallback values with detected=False so
+callers can gate shot prediction appropriately.
+"""
+
 import cv2
 import numpy as np
 import os
-from config import FRAME_WIDTH, FRAME_HEIGHT, RIM_X, RIM_Y, RIM_RADIUS
+
+from config import (
+    DISPLAY_WIDTH, DISPLAY_HEIGHT,
+    RIM_DETECTION_FRAMES, RIM_CONFIDENCE_THRESH,
+    RIM_X, RIM_Y, RIM_RADIUS,
+)
 
 
-def get_rim_position(cap=None, debug=True):
-    """Attempt to detect the rim from a video capture.
+# HSV range for the orange rim (slightly wider than ball range to capture metal)
+_RIM_LOWER = np.array([3,  80, 60],  dtype=np.uint8)
+_RIM_UPPER = np.array([25, 255, 255], dtype=np.uint8)
 
-    If detection fails, fall back to the fixed values from config.
-    The ring detection uses the same resized frame size as the main loop.
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Internal helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _sample_frames(cap: cv2.VideoCapture, n: int) -> list[np.ndarray]:
+    """Return up to n evenly-spaced frames from a capture, leaving cap at pos 0."""
+    total    = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    indices  = np.linspace(0, max(0, total - 1), min(n, total), dtype=int)
+    frames   = []
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            frames.append(cv2.resize(frame, (DISPLAY_WIDTH, DISPLAY_HEIGHT)))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    return frames
+
+
+def _candidate_circles_in_frame(frame: np.ndarray) -> list[tuple[int, int, int]]:
+    """Detect hoop-like circles in one frame. Returns list of (cx, cy, cr)."""
+    h, w = frame.shape[:2]
+
+    blurred = cv2.GaussianBlur(frame, (5, 5), 0)
+    hsv     = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+
+    # Orange mask – isolate rim metal colour
+    orange_mask = cv2.inRange(hsv, _RIM_LOWER, _RIM_UPPER)
+
+    # Also include white mask for the net backboard area (helps Hough stability)
+    white_mask = cv2.inRange(
+        hsv, np.array([0, 0, 160]), np.array([180, 50, 255])
+    )
+    combined_mask = cv2.bitwise_or(orange_mask, white_mask)
+
+    # Edge detection applied to the mask region
+    gray  = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 40, 120)
+    edges = cv2.bitwise_and(edges, combined_mask)
+
+    # Search only in upper 70 % of frame (rim is above midcourt)
+    search_edges = edges.copy()
+    search_edges[int(h * 0.70):, :] = 0
+
+    circles = cv2.HoughCircles(
+        search_edges,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=30,
+        param1=80,
+        param2=15,
+        minRadius=10,
+        maxRadius=65,
+    )
+
+    if circles is None:
+        return []
+
+    results = []
+    circles = np.round(circles[0]).astype(int)
+    for cx, cy, cr in circles:
+        # Exclude bottom 30 % of frame
+        if cy > h * 0.70:
+            continue
+        # Additional sanity – rim radius ≈ 10–65 px at 832×464
+        if cr < 10 or cr > 65:
+            continue
+        results.append((int(cx), int(cy), int(cr)))
+    return results
+
+
+def _cluster_candidates(
+    candidates: list[tuple[int, int, int]],
+    eps: float = 40.0,
+) -> tuple[int, int, int] | None:
     """
+    Simple single-pass density clustering: group candidates within `eps` pixels,
+    pick the group with the most votes, return its centroid.
+    """
+    if not candidates:
+        return None
 
+    used    = [False] * len(candidates)
+    clusters: list[list[int]] = []
+
+    for i, (cx, cy, _) in enumerate(candidates):
+        if used[i]:
+            continue
+        group = [i]
+        used[i] = True
+        for j, (ox, oy, _) in enumerate(candidates):
+            if not used[j] and np.hypot(cx - ox, cy - oy) < eps:
+                group.append(j)
+                used[j] = True
+        clusters.append(group)
+
+    best_group = max(clusters, key=len)
+    gx   = int(np.mean([candidates[i][0] for i in best_group]))
+    gy   = int(np.mean([candidates[i][1] for i in best_group]))
+    gr   = int(np.mean([candidates[i][2] for i in best_group]))
+    return gx, gy, gr
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Public function
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_rim_position(cap: cv2.VideoCapture | None = None, debug: bool = True) -> dict:
+    """
+    Detect the basketball rim from a video stream.
+
+    Returns
+    -------
+    dict with keys:
+        x, y, radius  – rim centre and radius in display pixels
+        detected      – True if confidently found, False if fallback / absent
+        confidence    – fraction of sampled frames that contained a candidate
+        reason        – human-readable status string
+    """
     fallback = {
-        "x": RIM_X,
-        "y": RIM_Y,
-        "radius": RIM_RADIUS
+        "x":          RIM_X,
+        "y":          RIM_Y,
+        "radius":     RIM_RADIUS,
+        "detected":   False,
+        "confidence": 0.0,
+        "reason":     "No video provided – using config defaults",
     }
 
     if cap is None:
         return fallback
 
-    pos = cap.get(cv2.CAP_PROP_POS_FRAMES)
-    ret, frame = cap.read()
-    try:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
-    except Exception:
-        pass
-
-    if not ret or frame is None:
-        print("[RIM] Failed to read frame from video")
+    # ── Sample frames ─────────────────────────────────────────────────────
+    frames = _sample_frames(cap, RIM_DETECTION_FRAMES)
+    if not frames:
+        fallback["reason"] = "Failed to read frames"
         return fallback
 
-    frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
-    h, w = frame.shape[:2]
+    # ── Collect candidates across all sampled frames ───────────────────────
+    all_candidates: list[tuple[int, int, int]] = []
+    frames_with_hit = 0
 
-    # Search in upper portion where rim typically is
-    # Restrict to right side where rim is visible
-    x0 = int(w * 0.4)  # Start from 40% of width
-    x1 = w  # To right edge
-    y0 = 0  # From top
-    y1 = int(h * 0.6)  # To 60% of height
+    for frame in frames:
+        hits = _candidate_circles_in_frame(frame)
+        if hits:
+            frames_with_hit += 1
+            all_candidates.extend(hits)
 
-    roi = frame[y0:y1, x0:x1]
-    
-    #HSV to isolate bright/white areas (rim is typically bright)
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    
-    # White/bright colors: low saturation, high value
-    lower_white = np.array([0, 0, 150])
-    upper_white = np.array([180, 100, 255])
-    white_mask = cv2.inRange(hsv, lower_white, upper_white)
-    
-    # Convert to grayscale and apply Canny on white regions
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(gray, 50, 150)
-    
-    # Only keep edges from bright/white areas
-    edges = cv2.bitwise_and(edges, white_mask)
+    confidence = frames_with_hit / len(frames) if frames else 0.0
+
+    print(f"[RIM] Sampled {len(frames)} frames, "
+          f"{frames_with_hit} had candidates ({confidence * 100:.0f}% confidence). "
+          f"Total raw candidates: {len(all_candidates)}")
+
+    # ── Confidence gate ───────────────────────────────────────────────────
+    if confidence < RIM_CONFIDENCE_THRESH or not all_candidates:
+        fallback["detected"]   = False
+        fallback["confidence"] = confidence
+        fallback["reason"]     = (
+            "Rim not confidently visible in video "
+            f"(conf={confidence:.2f} < threshold={RIM_CONFIDENCE_THRESH})"
+        )
+        print(f"[RIM] {fallback['reason']}")
+        return fallback
+
+    # ── Cluster & pick best ───────────────────────────────────────────────
+    result = _cluster_candidates(all_candidates, eps=50.0)
+    if result is None:
+        fallback["reason"] = "Clustering produced no consensus"
+        return fallback
+
+    rx, ry, rr = result
+    print(f"[RIM] Detected at ({rx}, {ry}), r={rr}, confidence={confidence:.2f}")
 
     if debug:
         os.makedirs("output", exist_ok=True)
-        debug_roi = roi.copy()
-        cv2.rectangle(frame, (x0, y0), (x1, y1), (255, 0, 0), 2)
-        cv2.imwrite("output/debug_raw_frame.png", frame)
-        cv2.imwrite("output/debug_roi_extracted.png", debug_roi)
-        cv2.imwrite("output/debug_white_mask.png", white_mask)
-        cv2.imwrite("output/debug_edges.png", edges)
+        dbg = frames[len(frames) // 2].copy()
+        cv2.circle(dbg, (rx, ry), rr,   (0, 255, 0),   3)
+        cv2.circle(dbg, (rx, ry), 4,    (0, 0, 255),  -1)
+        cv2.putText(dbg, f"Rim conf={confidence:.2f}", (rx - 60, ry - rr - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.imwrite("output/debug_detected_rim.png", dbg)
 
-    # Try Hough circles with parameters tuned for rim
-    circles = cv2.HoughCircles(
-        edges,
-        cv2.HOUGH_GRADIENT,
-        dp=1.0,
-        minDist=50,
-        param1=100,  # Higher threshold - need stronger edges
-        param2=20,   # Accumulator threshold
-        minRadius=12,
-        maxRadius=70,
-    )
-
-    best_candidate = None
-    best_score = -float("inf")
-
-    if circles is not None:
-        circles = np.round(circles[0]).astype(int)
-        print(f"[RIM] Found {len(circles)} candidates in ROI")
-
-        for cx, cy, cr in circles:
-            if cr < 12 or cr > 70:
-                continue
-
-            # Convert back to full frame coordinates
-            global_x = cx + x0
-            global_y = cy + y0
-            
-            # Score based on size (rim is typically 20-50 pixels)
-            size_score = 100 if 18 < cr < 55 else 50
-            
-            score = size_score
-
-            if score > best_score:
-                best_score = score
-                best_candidate = (global_x, global_y, cr)
-
-        if best_candidate is not None and best_score > 0:
-            cx_full, cy_full, cr_full = best_candidate
-            print(f"[RIM] Detected at: ({cx_full}, {cy_full}), r={cr_full}, score={best_score:.1f}")
-            if debug:
-                debug_frame = frame.copy()
-                cv2.circle(debug_frame, (cx_full, cy_full), int(cr_full), (0, 255, 0), 3)
-                cv2.putText(debug_frame, f"Score: {best_score:.1f}", (cx_full-40, cy_full-50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,0), 2)
-                cv2.imwrite("output/debug_detected_rim.png", debug_frame)
-            return {"x": int(cx_full), "y": int(cy_full), "radius": int(cr_full)}
-    else:
-        print(f"[RIM] No circles found in ROI")
+    return {
+        "x":          rx,
+        "y":          ry,
+        "radius":     rr,
+        "detected":   True,
+        "confidence": confidence,
+        "reason":     "OK",
+    }
